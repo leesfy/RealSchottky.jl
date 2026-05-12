@@ -274,3 +274,122 @@ function ordered_children_by_prebound(G::RealSchottkyGroup,
         rev = true,
     )
 end
+
+# -----------------------------------------------------------------------------
+# Full Lyamaev children order
+# -----------------------------------------------------------------------------
+
+"""
+One child in the full Lyamaev children-order table.
+
+- `child_index`: letter j for child S_j T.
+- `child_eps`: threshold eps / M(j,t).
+- `M`: estimate for this child subtree divided by parent size.
+- `block_M`: sum of M for this child and all younger siblings.
+- `block_count`: number of children in this block.
+"""
+struct OrderedChild
+    child_index::Int
+    child_eps::Float64
+    M::Float64
+    block_M::Float64
+    block_count::Int
+end
+
+"""
+Children-order table for the full Lyamaev traversal.
+
+For each parent leftmost letter t, stores children S_j T ordered by decreasing
+M(j,t) = (1 + K[j]) * L[(j,t)].
+"""
+struct ChildOrderTable
+    children::Dict{Int,Vector{OrderedChild}}
+end
+
+"""
+Estimate for child subtree S_j T relative to parent T.
+
+If T starts with S_t, then
+
+    child subtree ≤ M(j,t) * |Tz - Tw|,
+
+where M(j,t) = (1 + K[j]) * L[(j,t)].
+"""
+function child_M(bounds::Bounds, j::Int, t::Int)
+    j == -t && return 0.0
+    return (1.0 + bounds.K[j]) * bounds.L[(j, t)]
+end
+
+"""
+    build_child_order(G, bounds, eps)
+
+Build full Lyamaev children order.
+
+Children are ordered by decreasing M(j,t).  For each position k we also store
+the block sum M_k + M_{k+1} + ... over this child and all younger siblings.
+"""
+function build_child_order(G::RealSchottkyGroup,
+                           bounds::Bounds,
+                           eps::Float64)
+    eps > 0.0 || throw(ArgumentError("eps must be positive for child order"))
+
+    letters = alphabet(G)
+    table = Dict{Int,Vector{OrderedChild}}()
+
+    for t in letters
+        raw = Tuple{Int,Float64}[]
+
+        for j in letters
+            j == -t && continue
+
+            Mjt = child_M(bounds, j, t)
+
+            !isfinite(Mjt) && throw(ArgumentError(
+                "non-finite child estimate M($j,$t) = $Mjt",
+            ))
+
+            Mjt < 0.0 && throw(ArgumentError(
+                "negative child estimate M($j,$t) = $Mjt",
+            ))
+
+            push!(raw, (j, Mjt))
+        end
+
+        # Older children first: larger M means potentially larger subtree.
+        sort!(raw; by = item -> item[2], rev = true)
+
+        children = Vector{OrderedChild}(undef, length(raw))
+        running_block_M = 0.0
+
+        for k in length(raw):-1:1
+            j, Mjt = raw[k]
+            running_block_M += Mjt
+
+            child_eps = Mjt == 0.0 ? Inf : eps / Mjt
+            block_count = length(raw) - k + 1
+
+            children[k] = OrderedChild(
+                j,
+                child_eps,
+                Mjt,
+                running_block_M,
+                block_count,
+            )
+        end
+
+        table[t] = children
+    end
+
+    return ChildOrderTable(table)
+end
+
+"""Root children order. At root there is no parent circle, so no Lyamaev prebound."""
+function root_children(G::RealSchottkyGroup; reduced::Bool=false)
+    letters = alphabet(G)
+
+    if reduced
+        return [j for j in letters if j > 0]
+    else
+        return letters
+    end
+end

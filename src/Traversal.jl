@@ -96,7 +96,7 @@ struct TraversalParameters
     right_coset::Vector{Int}                 # Prefix exclusion for relative series.
     reduced::Bool                            # Old hyperelliptic symmetry reduction; normally false here.
     max_depth::Int                           # Maximum word length; 0 means identity only.
-    algorithm::Symbol                        # `:full`, `:bogatyrev`, or `:bogatyrev_prebound`.
+    algorithm::Symbol                        # `:full`, `:bogatyrev`, `:bogatyrev_prebound` or 'lyamaev.
     eps::Float64                             # Cutoff for adaptive algorithms.
     bounds::Any                              # Estimate object, e.g. `Bounds`.
     tail_size::Function                      # Size of transformed parameters for tail estimates.
@@ -123,7 +123,7 @@ function TraversalParameters(; z, u, term,
         throw(ArgumentError("id_transform_term must have same length as u"))
     max_depth >= 0 ||
         throw(ArgumentError("max_depth must be non-negative"))
-    algorithm in (:full, :bogatyrev, :bogatyrev_prebound) ||
+    algorithm in (:full, :bogatyrev, :bogatyrev_prebound, :lyamaev) ||
         throw(ArgumentError("unknown traversal algorithm: $algorithm"))
 
     if algorithm != :full && eps <= 0.0
@@ -195,6 +195,8 @@ function traverse(G::RealSchottkyGroup, params::TraversalParameters)
         return traverse_bogatyrev(G, params)
     elseif params.algorithm == :bogatyrev_prebound
         return traverse_bogatyrev_prebound(G, params)
+    elseif params.algorithm == :lyamaev
+        return traverse_lyamaev(G, params)
     end
 
     error("unreachable")
@@ -443,4 +445,143 @@ function traverse_bogatyrev_prebound(G::RealSchottkyGroup, params::TraversalPara
     end
 
     return pack_traversal_result(G, params, result, err, visited, skipped)
+end
+
+"""
+    traverse_lyamaev(G, params)
+
+Full Lyamaev traversal.
+
+
+- store the current branch by levels;
+- use a children-order table for every parent letter;
+- each child has threshold child_eps = eps / M(child);
+- if one child is too small, discard this child and all younger siblings;
+- add the whole discarded block to the geometric error estimate.
+
+This is different from `:bogatyrev_prebound`, which checks children one by one.
+"""
+function traverse_lyamaev(G::RealSchottkyGroup, params::TraversalParameters)
+    bounds = params.bounds === nothing ? build_bounds(G) : params.bounds
+    child_order = build_child_order(G, bounds, params.eps)
+
+    result = copy(params.id_transform_term)
+    err = 0.0
+    visited = 0
+    skipped = 0
+
+    max_depth = params.max_depth
+
+    if max_depth == 0
+        return pack_traversal_result(G, params, result, err, visited, skipped)
+    end
+
+    root = root_children(G; reduced=params.reduced)
+
+    # Current branch data.
+    #
+    # depth 0 is stored at index 1.
+    # depth n is stored at index n+1.
+    word_letters = fill(0, max_depth)
+    child_num = fill(0, max_depth)
+
+    Sz_levels = Vector{Vector{ComplexF64}}(undef, max_depth + 1)
+    dist = zeros(Float64, max_depth + 1)
+
+    len = 0
+    Sz_levels[1] = params.z
+    dist[1] = params.tail_size(params.z)
+
+    while true
+        # Try to grow current branch. If max_depth is reached, treat current
+        # node as a leaf, add its descendant tail, and search for next node.
+        if len == max_depth
+            t = word_letters[len]
+            tail = subtree_tail_bound(bounds, t, dist[len + 1])
+            err += tail
+            skipped += 1
+
+            # Do not grow deeper. Search for next node from current level.
+        else
+            len += 1
+            child_num[len] = 0
+        end
+
+        # Find next admissible node.
+        while true
+            # If current layer is exhausted, go upward until a non-exhausted
+            # layer is found.
+            while true
+                if len == 1
+                    if child_num[1] >= length(root)
+                        return pack_traversal_result(G, params, result, err, visited, skipped)
+                    end
+                    break
+                else
+                    parent_letter = word_letters[len - 1]
+                    parent_children = child_order.children[parent_letter]
+
+                    if child_num[len] >= length(parent_children)
+                        len -= 1
+                    else
+                        break
+                    end
+                end
+            end
+
+            child_num[len] += 1
+
+            if len == 1
+                # First level: no parent circle, so no child prebound.
+                j = root[child_num[1]]
+                word_letters[1] = j
+
+            else
+                parent_letter = word_letters[len - 1]
+                parent_children = child_order.children[parent_letter]
+                child = parent_children[child_num[len]]
+
+                # Full Lyamaev block cut:
+                # if current child is too small, then all younger siblings are
+                # also too small because children are ordered by decreasing M.
+                parent_size = dist[len]  # parent depth len-1 is index len
+
+                if parent_size < child.child_eps
+                    err += parent_size * child.block_M
+                    skipped += child.block_count
+
+                    # Throw away current child and all younger siblings by
+                    # returning to the parent level.
+                    len -= 1
+                    continue
+                end
+
+                j = child.child_index
+                word_letters[len] = j
+            end
+
+            current_word = collect(@view word_letters[1:len])
+
+            # Right-coset prefix is excluded together with all descendants.
+            if has_right_coset_prefix(current_word, params.right_coset)
+                continue
+            end
+
+            break
+        end
+
+        # Contribute the found node.
+        parent_Sz = Sz_levels[len]       # parent depth len-1
+        newSz = generator(G, word_letters[len])(parent_Sz)
+
+        Sz_levels[len + 1] = newSz
+        dist[len + 1] = params.tail_size(newSz)
+
+        current_word = collect(@view word_letters[1:len])
+
+        if !has_left_coset_suffix(current_word, params.left_coset)
+            result .= params.operation(result, params.term(params.u, newSz))
+            visited += 1
+        end
+    end
 end
