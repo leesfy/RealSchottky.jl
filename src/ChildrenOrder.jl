@@ -291,32 +291,71 @@ The one-index field K[t] is set to sum_{j != t} K4(j,t), so ordinary Bogatyrev
 can also use this estimate.
 """
 function build_k4_bounds(G::RealSchottkyGroup; l_estimate::Symbol=:derivative)
-    base = build_k3_bounds(G; l_estimate=l_estimate)
+    letters = alphabet(G)
+    L = build_L_estimates(G)
 
-    letters = base.letters
     Dall = k3_diameter_sum_estimate(G)
 
     K_pair = Dict{Tuple{Int,Int},Float64}()
 
     for t in letters
-        for child in letters
-            child == -t && continue
-
-            # child = -j in the notation of the proof:
-            # A ends with S_child = S_{-j}, hence j = -child.
-            K_pair[(child, t)] = Dall * k3_h_factor(G, -child, t)
+        for j in letters
+            j == t && continue
+            K_pair[(j, t)] = Dall * k3_h_factor(G, j, t)
         end
     end
 
+    K = Dict{Int,Float64}()
+
+    for t in letters
+        s = 0.0
+
+        for j in letters
+            j == t && continue
+            s += K_pair[(j, t)]
+        end
+
+        K[t] = s
+    end
+
     return Bounds(
-        base.letters,
-        base.L,
-        base.K;              # keep K3 as the one-index tail estimate
+        letters,
+        L,
+        K;
         K_pair=K_pair,
         estimate=:k4,
         l_estimate=l_estimate,
     )
 end
+
+
+# function build_k4_bounds(G::RealSchottkyGroup; l_estimate::Symbol=:derivative)
+#     base = build_k3_bounds(G; l_estimate=l_estimate)
+
+#     letters = base.letters
+#     Dall = k3_diameter_sum_estimate(G)
+
+#     K_pair = Dict{Tuple{Int,Int},Float64}()
+
+#     for t in letters
+#         for child in letters
+#             child == -t && continue
+
+#             # child = -j in the notation of the proof:
+#             # A ends with S_child = S_{-j}, hence j = -child.
+#             K_pair[(child, t)] = Dall * k3_h_factor(G, -child, t)
+#         end
+#     end
+
+#     return Bounds(
+#         base.letters,
+#         base.L,
+#         base.K;              # keep K3 as the one-index tail estimate
+#         K_pair=K_pair,
+#         estimate=:k4,
+#         l_estimate=l_estimate,
+#     )
+# end
 
 
 function build_bounds(G::RealSchottkyGroup; estimate::Symbol=:k3, l_estimate::Symbol=:derivative)
@@ -387,10 +426,10 @@ Coefficient for the whole child subtree S_j T relative to parent T.
 
 M(j,t) = (1 + K(j,t)) L(j,t).
 """
-# function child_coeff(bounds::Bounds, j::Int, t::Int)
-#     j == -t && return 0.0
-#     return (1.0 + tail_K(bounds, j, t)) * bounds.L[(j, t)]
-# end
+function child_coeff(bounds::Bounds, j::Int, t::Int)
+    j == -t && return 0.0
+    return (1.0 + tail_K(bounds, j, t)) * bounds.L[(j, t)]
+end
 
 
 # function child_coeff(bounds::Bounds, child::Int, parent::Int)
@@ -405,36 +444,36 @@ M(j,t) = (1 + K(j,t)) L(j,t).
 #     end
 # end
 
-function child_coeff(bounds::Bounds,
-                     child::Int,
-                     parent::Int;
-                     child_bound::Symbol=:k3L)
-    child == -parent && return 0.0
+# function child_coeff(bounds::Bounds,
+#                      child::Int,
+#                      parent::Int;
+#                      child_bound::Symbol=:k3L)
+#     child == -parent && return 0.0
 
-    if child_bound == :k3L
-        return (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
+#     if child_bound == :k3L
+#         return (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
 
-    elseif child_bound == :k4
-        haskey(bounds.K_pair, (child, parent)) || throw(ArgumentError(
-            "child_bound=:k4 requires K_pair[(child,parent)]. " *
-            "Use estimate=:k4 when building bounds.",
-        ))
+#     elseif child_bound == :k4
+#         haskey(bounds.K_pair, (child, parent)) || throw(ArgumentError(
+#             "child_bound=:k4 requires K_pair[(child,parent)]. " *
+#             "Use estimate=:k4 when building bounds.",
+#         ))
 
-        return bounds.K_pair[(child, parent)]
+#         return bounds.K_pair[(child, parent)]
 
-    elseif child_bound == :min
-        old = (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
+#     elseif child_bound == :min
+#         old = (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
 
-        new = get(bounds.K_pair, (child, parent), Inf)
+#         new = get(bounds.K_pair, (child, parent), Inf)
 
-        return min(old, new)
+#         return min(old, new)
 
-    else
-        throw(ArgumentError(
-            "unknown child_bound=$child_bound; expected :k3L, :k4, or :min",
-        ))
-    end
-end
+#     else
+#         throw(ArgumentError(
+#             "unknown child_bound=$child_bound; expected :k3L, :k4, or :min",
+#         ))
+#     end
+# end
 
 """
 Pre-bound for a child before evaluating it.
