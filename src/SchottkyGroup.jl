@@ -221,3 +221,8 @@ function side_pairing_mobius(Csrc::RealCircle, Ctgt::RealCircle)
     #   (ct*z - ct*cs - rt*rs) / (z - cs)
     return Mobius(ct, -ct*cs - rt*rs, 1.0, -cs)
 end
+
+"""Sum of diameters of all 2g boundary circles."""
+function total_circle_diameter(G::RealSchottkyGroup)
+    return sum(circle_diameter(circle(G, j)) for j in alphabet(G))
+end

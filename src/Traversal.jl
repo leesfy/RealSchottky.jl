@@ -99,6 +99,8 @@ struct TraversalParameters
     algorithm::Symbol                        # `:full`, `:bogatyrev`, `:bogatyrev_prebound` or 'lyamaev.
     eps::Float64                             # Cutoff for adaptive algorithms.
     bounds::Any                              # Estimate object, e.g. `Bounds`.
+    estimate::Symbol
+    l_estimate::Symbol
     tail_size::Function                      # Size of transformed parameters for tail estimates.
     return_stats::Bool                       # Return `TraversalStats` instead of only values.
 end
@@ -113,6 +115,8 @@ function TraversalParameters(; z, u, term,
                               algorithm=:full,
                               eps=1e-5,
                               bounds=nothing,
+                              estimate=:k3,
+                              l_estimate=:derivative,
                               tail_size=default_tail_size,
                               return_stats=false)
     zc = as_complex_vector(z)
@@ -136,7 +140,12 @@ function TraversalParameters(; z, u, term,
         zc, uc, term, operation, idc,
         Int.(left_coset), Int.(right_coset),
         Bool(reduced), Int(max_depth),
-        Symbol(algorithm), Float64(eps), bounds, tail_size, Bool(return_stats),
+        Symbol(algorithm), Float64(eps),
+        bounds,
+        Symbol(estimate),
+        Symbol(l_estimate),
+        tail_size,
+        Bool(return_stats),
     )
 end
 
@@ -261,7 +270,7 @@ A vertex is evaluated first. Its descendants are skipped if
 The accumulated `error_bound` is the sum of these skipped descendant estimates.
 """
 function traverse_bogatyrev(G::RealSchottkyGroup, params::TraversalParameters)
-    bounds = params.bounds === nothing ? build_bounds(G) : params.bounds
+    bounds = params.bounds === nothing ? build_bounds(G; estimate=params.estimate, l_estimate=params.l_estimate) : params.bounds
     alphabet_g = alphabet(G)
 
     result = copy(params.id_transform_term)
@@ -303,7 +312,7 @@ function traverse_bogatyrev(G::RealSchottkyGroup, params::TraversalParameters)
             end
 
             # Descendant-only tail after the already evaluated child.
-            tail = subtree_tail_bound(bounds, j, params.tail_size(newSz))
+            tail = subtree_tail_bound(bounds, new_word, params.tail_size(newSz))
             next_depth = depth + 1
 
             if tail < params.eps
@@ -317,7 +326,7 @@ function traverse_bogatyrev(G::RealSchottkyGroup, params::TraversalParameters)
                 err += tail
                 skipped += 1
 
-                @warn "max_depth reached before eps; returning partial traversal result" depth=next_depth tail=tail eps=params.eps word=new_word visited=visited skipped=skipped
+                @warn "max_depth reached before eps; returning partial traversal result" depth=next_depth bound=tail eps=params.eps word=new_word visited=visited skipped=skipped
                 
                 return pack_traversal_result(G, params, result, err, visited, skipped)
 
@@ -343,7 +352,7 @@ For a child S_j T it estimates the whole child subtree by
 where t is the leftmost letter of T.
 """
 function traverse_bogatyrev_prebound(G::RealSchottkyGroup, params::TraversalParameters)
-    bounds = params.bounds === nothing ? build_bounds(G) : params.bounds
+    bounds = params.bounds === nothing ? build_bounds(G; estimate=params.estimate, l_estimate=params.l_estimate) : params.bounds
     alphabet_g = alphabet(G)
 
     result = copy(params.id_transform_term)
@@ -402,7 +411,7 @@ function traverse_bogatyrev_prebound(G::RealSchottkyGroup, params::TraversalPara
                     err += total_bound
                     skipped += 1
 
-                    @warn "max_depth reached before eps; returning partial traversal result" depth=next_depth tail=tail eps=params.eps word=new_word visited=visited skipped=skipped
+                    @warn "max_depth reached before eps; returning partial traversal result" depth=next_depth bound=total_bound eps=params.eps word=new_word visited=visited skipped=skipped
                 
                     return pack_traversal_result(G, params, result, err, visited, skipped)
                 end
@@ -426,7 +435,7 @@ function traverse_bogatyrev_prebound(G::RealSchottkyGroup, params::TraversalPara
                     err += total_bound
                     skipped += 1
 
-                    @warn "max_depth reached before eps; returning partial traversal result" depth=next_depth tail=tail eps=params.eps word=new_word visited=visited skipped=skipped
+                    @warn "max_depth reached before eps; returning partial traversal result" depth=next_depth bound=total_bound eps=params.eps word=new_word visited=visited skipped=skipped
                 
                     return pack_traversal_result(G, params, result, err, visited, skipped)
                 end
@@ -462,7 +471,7 @@ Full Lyamaev traversal.
 This is different from `:bogatyrev_prebound`, which checks children one by one.
 """
 function traverse_lyamaev(G::RealSchottkyGroup, params::TraversalParameters)
-    bounds = params.bounds === nothing ? build_bounds(G) : params.bounds
+    bounds = params.bounds === nothing ? build_bounds(G; estimate=params.estimate, l_estimate=params.l_estimate) : params.bounds
     child_order = build_child_order(G, bounds, params.eps)
 
     result = copy(params.id_transform_term)
@@ -497,7 +506,9 @@ function traverse_lyamaev(G::RealSchottkyGroup, params::TraversalParameters)
         # node as a leaf, add its descendant tail, and search for next node.
         if len == max_depth
             t = word_letters[len]
-            tail = subtree_tail_bound(bounds, t, dist[len + 1])
+            # tail = subtree_tail_bound(bounds, t, dist[len + 1])
+            current_word = collect(@view word_letters[1:len])
+            tail = subtree_tail_bound(bounds, current_word, dist[len + 1])
             err += tail
             skipped += 1
 

@@ -6,25 +6,6 @@
 # -----------------------------------------------------------------------------
 
 """
-    derivative_bound_on_circle(M, C)
-
-Upper bound for `|M'(z)|` on the closed disk bounded by `C`.
-
-For `M(z)=(az+b)/(cz+d)`, use
-`|M'(z)| = |ad-bc| / |cz+d|^2`.
-"""
-function derivative_bound_on_circle(M::Mobius, C::RealCircle; pole_tol=1e-14)
-    denom_min = abs(M.c * C.center + M.d) - abs(M.c) * C.radius
-
-    if denom_min <= pole_tol
-        return Inf
-    end
-
-    return abs(mobius_det(M)) / denom_min^2
-end
-
-
-"""
 Estimate data used by adaptive traversal.
 
 - `L[(j,t)]`: one-step estimate
@@ -36,6 +17,46 @@ struct Bounds
     letters::Vector{Int}
     L::Dict{Tuple{Int,Int},Float64}
     K::Dict{Int,Float64}
+    K_pair::Dict{Tuple{Int,Int},Float64}
+    estimate::Symbol
+    l_estimate::Symbol
+end
+
+function Bounds(letters::Vector{Int},
+                L::Dict{Tuple{Int,Int},Float64},
+                K::Dict{Int,Float64};
+                K_pair=Dict{Tuple{Int,Int},Float64}(),
+                estimate::Symbol=:custom,
+                l_estimate::Symbol=:derivative)
+    return Bounds(letters, L, K, K_pair, estimate, l_estimate)
+end
+
+
+"""
+    build_L_estimates(G; l_estimate=:derivative)
+
+Build one-step estimates L[(j,t)].
+
+Currently implemented:
+- `:derivative`: `sup_{x∈C_t} |S_j'(x)|`.
+"""
+function build_L_estimates(G::RealSchottkyGroup; l_estimate::Symbol=:derivative)
+    l_estimate == :derivative ||
+        throw(ArgumentError("unknown L estimate: $l_estimate"))
+
+    letters = alphabet(G)
+    L = Dict{Tuple{Int,Int},Float64}()
+
+    for t in letters
+        Ct = circle(G, t)
+
+        for j in letters
+            j == -t && continue
+            L[(j, t)] = derivative_bound_on_circle(generator(G, j), Ct)
+        end
+    end
+
+    return L
 end
 
 
@@ -50,18 +71,10 @@ This is a fallback estimate, not the main one.
 function build_simple_bounds(G::RealSchottkyGroup;
                              max_iter::Int=10_000,
                              tol::Float64=1e-12,
-                             max_bound::Float64=1e12)
+                             max_bound::Float64=1e12,
+                             l_estimate::Symbol=:derivative)
     letters = alphabet(G)
-    L = Dict{Tuple{Int,Int},Float64}()
-
-    for t in letters
-        Ct = circle(G, t)
-
-        for j in letters
-            j == -t && continue
-            L[(j, t)] = derivative_bound_on_circle(generator(G, j), Ct)
-        end
-    end
+    L = build_L_estimates(G; l_estimate=l_estimate)
 
     K = Dict(j => 0.0 for j in letters)
 
@@ -90,11 +103,27 @@ function build_simple_bounds(G::RealSchottkyGroup;
         end
 
         K = Knew
-        maxdiff < tol && return Bounds(letters, L, K)
+
+        if maxdiff < tol
+            return Bounds(
+                letters,
+                L,
+                K;
+                estimate=:simple,
+                l_estimate=l_estimate,
+            )
+        end
     end
 
     @warn "simple bound iteration did not reach tolerance" tol max_iter
-    return Bounds(letters, L, K)
+
+    return Bounds(
+        letters,
+        L,
+        K;
+        estimate=:simple,
+        l_estimate=l_estimate,
+    )
 end
 
 
@@ -138,12 +167,42 @@ function gamma_constants(G::RealSchottkyGroup)
     return γ
 end
 
+"""
+    k3_h_factor(G, j, t)
 
-"""Sum of diameters of all 2g boundary circles."""
-function total_circle_diameter(G::RealSchottkyGroup)
-    return sum(circle_diameter(circle(G, j)) for j in alphabet(G))
+The denominator factor from the K3 proof:
+
+    h(j,t) =
+        1 / (4 dist(C_j,C_t) * (1 + dist(C_j,C_t)/diam(C_j))).
+
+Here j and t are real letters.
+"""
+function k3_h_factor(G::RealSchottkyGroup, j::Int, t::Int)
+    j == t && return 0.0
+
+    Cj = circle(G, j)
+    Ct = circle(G, t)
+
+    δ = circle_distance(Cj, Ct)
+    dj = circle_diameter(Cj)
+
+    return 1.0 / (4.0 * δ * (1.0 + δ / dj))
 end
 
+"""
+    k3_diameter_sum_estimate(G)
+
+Old K3 estimate for the full diameter sum:
+
+    D_all = ((sqrt(gamma_max)+1)/2) * sum_{i in Ξ} diam(C_i).
+"""
+function k3_diameter_sum_estimate(G::RealSchottkyGroup)
+    γ = gamma_constants(G)
+    γmax = maximum(values(γ))
+    diam_sum = total_circle_diameter(G)
+
+    return ((sqrt(γmax) + 1.0) / 2.0) * diam_sum
+end
 
 """
     k3_constant(G, t, γmax, diam_sum)
@@ -153,30 +212,43 @@ General K3 tail estimate for a word whose leftmost letter is `t`.
 This is the non-hyperelliptic version: the diameter sum is over all 2g
 boundary circles.
 """
+# function k3_constant(G::RealSchottkyGroup,
+#                      t::Int,
+#                      γmax::Float64,
+#                      diam_sum::Float64)
+#     Ct = circle(G, t)
+
+#     min_denom = Inf
+
+#     for j in alphabet(G)
+#         j == t && continue
+
+#         Cj = circle(G, j)
+#         δ = circle_distance(Cj, Ct)
+#         dj = circle_diameter(Cj)
+
+#         denom = 4.0 * δ * (1.0 + δ / dj)
+#         min_denom = min(min_denom, denom)
+#     end
+
+#     isfinite(min_denom) || throw(ArgumentError(
+#         "could not compute K3 denominator for letter $t",
+#     ))
+
+#     return ((sqrt(γmax) + 1.0) / 2.0) * diam_sum / min_denom
+# end
+
 function k3_constant(G::RealSchottkyGroup,
                      t::Int,
-                     γmax::Float64,
-                     diam_sum::Float64)
-    Ct = circle(G, t)
-
-    min_denom = Inf
+                     diameter_sum_estimate::Float64)
+    max_h = 0.0
 
     for j in alphabet(G)
         j == t && continue
-
-        Cj = circle(G, j)
-        δ = circle_distance(Cj, Ct)
-        dj = circle_diameter(Cj)
-
-        denom = 4.0 * δ * (1.0 + δ / dj)
-        min_denom = min(min_denom, denom)
+        max_h = max(max_h, k3_h_factor(G, j, t))
     end
 
-    isfinite(min_denom) || throw(ArgumentError(
-        "could not compute K3 denominator for letter $t",
-    ))
-
-    return ((sqrt(γmax) + 1.0) / 2.0) * diam_sum / min_denom
+    return diameter_sum_estimate * max_h
 end
 
 
@@ -188,37 +260,104 @@ Build bounds using the generalized K3 estimate.
 `K[t]` is explicit from the K3 theorem; `L[(j,t)]` is still used only for
 child pre-estimates.
 """
-function build_k3_bounds(G::RealSchottkyGroup)
+function build_k3_bounds(G::RealSchottkyGroup; l_estimate::Symbol=:derivative)
     letters = alphabet(G)
+    L = build_L_estimates(G; l_estimate=l_estimate)
 
-    L = Dict{Tuple{Int,Int},Float64}()
-
-    for t in letters
-        Ct = circle(G, t)
-
-        for j in letters
-            j == -t && continue
-            L[(j, t)] = derivative_bound_on_circle(generator(G, j), Ct)
-        end
-    end
-
-    γ = gamma_constants(G)
-    γmax = maximum(values(γ))
-    diam_sum = total_circle_diameter(G)
+    Dall = k3_diameter_sum_estimate(G)
 
     K = Dict{Int,Float64}()
 
     for t in letters
-        K[t] = k3_constant(G, t, γmax, diam_sum)
+        # K[t] = k3_constant(G, t, γmax, diam_sum)
+        K[t] = k3_constant(G, t, Dall)
     end
 
-    return Bounds(letters, L, K)
+    return Bounds(letters, L, K; estimate=:k3, l_estimate=l_estimate)
 end
 
 
-"""Default bound builder used by traversal."""
-build_bounds(G::RealSchottkyGroup) = build_k3_bounds(G)
+"""
+    build_k4_bounds(G)
 
+Build two-index K4 estimates
+
+    K4(j,t) = D_all * h(j,t),
+
+where D_all is the old K3 diameter-sum estimate, but the denominator factor
+h(j,t) is kept instead of taking max over j.
+
+The one-index field K[t] is set to sum_{j != t} K4(j,t), so ordinary Bogatyrev
+can also use this estimate.
+"""
+function build_k4_bounds(G::RealSchottkyGroup; l_estimate::Symbol=:derivative)
+    base = build_k3_bounds(G; l_estimate=l_estimate)
+
+    letters = base.letters
+    Dall = k3_diameter_sum_estimate(G)
+
+    K_pair = Dict{Tuple{Int,Int},Float64}()
+
+    for t in letters
+        for child in letters
+            child == -t && continue
+
+            # child = -j in the notation of the proof:
+            # A ends with S_child = S_{-j}, hence j = -child.
+            K_pair[(child, t)] = Dall * k3_h_factor(G, -child, t)
+        end
+    end
+
+    return Bounds(
+        base.letters,
+        base.L,
+        base.K;              # keep K3 as the one-index tail estimate
+        K_pair=K_pair,
+        estimate=:k4,
+        l_estimate=l_estimate,
+    )
+end
+
+
+function build_bounds(G::RealSchottkyGroup; estimate::Symbol=:k3, l_estimate::Symbol=:derivative)
+    if estimate == :k3
+        return build_k3_bounds(G, l_estimate=l_estimate)
+
+    elseif estimate == :k4
+        return build_k4_bounds(G, l_estimate=l_estimate)
+
+    elseif estimate == :simple
+        return build_simple_bounds(G, l_estimate=l_estimate)
+
+    else
+        throw(ArgumentError("unknown estimate: $estimate"))
+    end
+end
+
+"""Tail estimate after a word starting with S_j."""
+tail_K(bounds::Bounds, j::Int) = bounds.K[j]
+
+"""
+Tail estimate after T = S_j Q, where Q starts with S_t.
+
+If K_pair[(j,t)] is absent, fall back to K[j].
+"""
+tail_K(bounds::Bounds, j::Int, t::Int) = get(bounds.K_pair, (j, t), bounds.K[j])
+
+
+"""Tail estimate after a concrete word."""
+function tail_K(bounds::Bounds, word::Vector{Int})
+    isempty(word) && return 0.0
+
+    j = last(word)
+
+    if length(word) >= 2
+        t = word[end - 1]
+        return tail_K(bounds, j, t)
+    else
+        return tail_K(bounds, j)
+    end
+end
 
 """
 Descendant-only tail bound after an already evaluated vertex.
@@ -226,18 +365,76 @@ Descendant-only tail bound after an already evaluated vertex.
 Example for η:
 `∑_{S>T} |Sz-Sw| ≤ K[t] |Tz-Tw|`.
 """
-subtree_tail_bound(bounds::Bounds, t::Int, size::Float64) =
-    bounds.K[t] * size
+subtree_tail_bound(bounds::Bounds, word::Vector{Int}, size::Float64) =
+    tail_K(bounds, word) * size
+
+
+"""Backward-compatible one-letter tail bound."""
+subtree_tail_bound(bounds::Bounds, j::Int, size::Float64) =
+    tail_K(bounds, j) * size
+
+# """
+# Child plus all descendants after the child has been transformed.
+
+# The child itself is not in the sum yet, hence the factor `(1+K)`.
+# """
+# child_subtree_bound(bounds::Bounds, child_letter::Int, child_size::Float64) =
+#     (1.0 + bounds.K[child_letter]) * child_size
 
 
 """
-Child plus all descendants after the child has been transformed.
+Coefficient for the whole child subtree S_j T relative to parent T.
 
-The child itself is not in the sum yet, hence the factor `(1+K)`.
+M(j,t) = (1 + K(j,t)) L(j,t).
 """
-child_subtree_bound(bounds::Bounds, child_letter::Int, child_size::Float64) =
-    (1.0 + bounds.K[child_letter]) * child_size
+# function child_coeff(bounds::Bounds, j::Int, t::Int)
+#     j == -t && return 0.0
+#     return (1.0 + tail_K(bounds, j, t)) * bounds.L[(j, t)]
+# end
 
+
+# function child_coeff(bounds::Bounds, child::Int, parent::Int)
+#     child == -parent && return 0.0
+#     old = (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
+
+#     if bounds.estimate == :k4
+#         new = bounds.K_pair[(child, parent)]
+#         return min(old, new)
+#     else
+#         return old
+#     end
+# end
+
+function child_coeff(bounds::Bounds,
+                     child::Int,
+                     parent::Int;
+                     child_bound::Symbol=:k3L)
+    child == -parent && return 0.0
+
+    if child_bound == :k3L
+        return (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
+
+    elseif child_bound == :k4
+        haskey(bounds.K_pair, (child, parent)) || throw(ArgumentError(
+            "child_bound=:k4 requires K_pair[(child,parent)]. " *
+            "Use estimate=:k4 when building bounds.",
+        ))
+
+        return bounds.K_pair[(child, parent)]
+
+    elseif child_bound == :min
+        old = (1.0 + bounds.K[child]) * bounds.L[(child, parent)]
+
+        new = get(bounds.K_pair, (child, parent), Inf)
+
+        return min(old, new)
+
+    else
+        throw(ArgumentError(
+            "unknown child_bound=$child_bound; expected :k3L, :k4, or :min",
+        ))
+    end
+end
 
 """
 Pre-bound for a child before evaluating it.
@@ -249,14 +446,19 @@ function child_subtree_prebound(bounds::Bounds,
                                 parent_left_letter::Int,
                                 parent_size::Float64)
     child_letter == -parent_left_letter && return 0.0
-
-    return (1.0 + bounds.K[child_letter]) *
-           bounds.L[(child_letter, parent_left_letter)] *
-           parent_size
+    return child_coeff(bounds, child_letter, parent_left_letter) * parent_size
 end
 
+"""
+Child plus all descendants after the child has already been transformed.
 
-"""Order children by their pre-bound, largest first."""
+At root there is no previous letter, so use one-index K[j].
+"""
+child_subtree_bound(bounds::Bounds, child_letter::Int, child_size::Float64) =
+    (1.0 + tail_K(bounds, child_letter)) * child_size
+
+
+"""Order children by M(j,t) pre-bound, largest first."""
 function ordered_children_by_prebound(G::RealSchottkyGroup,
                                       bounds::Bounds,
                                       parent_left_letter::Int)
@@ -270,10 +472,11 @@ function ordered_children_by_prebound(G::RealSchottkyGroup,
 
     return sort(
         allowed;
-        by = j -> (1.0 + bounds.K[j]) * bounds.L[(j, parent_left_letter)],
+        by = j -> child_coeff(bounds, j, parent_left_letter),
         rev = true,
     )
 end
+
 
 # -----------------------------------------------------------------------------
 # Full Lyamaev children order
@@ -296,6 +499,14 @@ struct OrderedChild
     block_count::Int
 end
 
+# struct OrderedChild
+#     child_index::Int
+#     child_eps::Float64
+#     coeff::Float64
+#     block_coeff::Float64
+#     block_count::Int
+# end
+
 """
 Children-order table for the full Lyamaev traversal.
 
@@ -304,20 +515,6 @@ M(j,t) = (1 + K[j]) * L[(j,t)].
 """
 struct ChildOrderTable
     children::Dict{Int,Vector{OrderedChild}}
-end
-
-"""
-Estimate for child subtree S_j T relative to parent T.
-
-If T starts with S_t, then
-
-    child subtree ≤ M(j,t) * |Tz - Tw|,
-
-where M(j,t) = (1 + K[j]) * L[(j,t)].
-"""
-function child_M(bounds::Bounds, j::Int, t::Int)
-    j == -t && return 0.0
-    return (1.0 + bounds.K[j]) * bounds.L[(j, t)]
 end
 
 """
@@ -342,7 +539,7 @@ function build_child_order(G::RealSchottkyGroup,
         for j in letters
             j == -t && continue
 
-            Mjt = child_M(bounds, j, t)
+            Mjt = child_coeff(bounds, j, t)
 
             !isfinite(Mjt) && throw(ArgumentError(
                 "non-finite child estimate M($j,$t) = $Mjt",

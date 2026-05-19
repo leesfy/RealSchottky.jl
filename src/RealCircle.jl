@@ -62,3 +62,21 @@ end
 function is_outside(C::RealCircle, z::ComplexF64; tol=1e-10)
     return abs(z - circle_center_complex(C)) > C.radius + tol
 end
+
+"""
+    derivative_bound_on_circle(M, C)
+
+Upper bound for `|M'(z)|` on the closed disk bounded by `C`.
+
+For `M(z)=(az+b)/(cz+d)`, use
+`|M'(z)| = |ad-bc| / |cz+d|^2`.
+"""
+function derivative_bound_on_circle(M::Mobius, C::RealCircle; pole_tol=1e-14)
+    denom_min = abs(M.c * C.center + M.d) - abs(M.c) * C.radius
+
+    if denom_min <= pole_tol
+        return Inf
+    end
+
+    return abs(mobius_det(M)) / denom_min^2
+end

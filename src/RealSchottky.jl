@@ -62,6 +62,7 @@ export Mobius,
        plot_pairings,
        plot_pairing_images,
        plot_orbit,
+       plot_orbit_pair,
        plot_word_image,
        plot_cayley_tree,
        save_plot

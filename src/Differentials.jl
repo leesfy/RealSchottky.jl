@@ -34,6 +34,8 @@ function eta(G::RealSchottkyGroup, u, z, w;
              algorithm=:bogatyrev,
              eps=1e-6,
              bounds=nothing,
+             estimate=:k3,
+             l_estimate=:derivative,
              tail_size=default_tail_size,
              return_stats=false)
 
@@ -53,6 +55,8 @@ function eta(G::RealSchottkyGroup, u, z, w;
         algorithm=algorithm,
         eps=eps,
         bounds=bounds,
+        estimate=estimate,
+        l_estimate=l_estimate,
         tail_size=tail_size,
         return_stats=return_stats,
     )
@@ -70,6 +74,8 @@ eta_zero_infty(G::RealSchottkyGroup, u;
                algorithm=:bogatyrev,
                eps=1e-6,
                bounds=nothing,
+               estimate=:k3,
+               l_estimate=:derivative,
                tail_size=default_tail_size,
                return_stats=false) =
     eta(G, u, 0.0, CP1_INF;
@@ -77,6 +83,8 @@ eta_zero_infty(G::RealSchottkyGroup, u;
         algorithm=algorithm,
         eps=eps,
         bounds=bounds,
+        estimate=estimate,
+        l_estimate=l_estimate,
         tail_size=tail_size,
         return_stats=return_stats)
 
@@ -90,6 +98,8 @@ function zeta_j(G::RealSchottkyGroup, j::Integer, u;
                 algorithm=:bogatyrev,
                 eps=1e-6,
                 bounds=nothing,
+                estimate=:k3,
+                l_estimate=:derivative,
                 tail_size=default_tail_size,
                 return_stats=false)
 
@@ -112,6 +122,8 @@ function zeta_j(G::RealSchottkyGroup, j::Integer, u;
         algorithm=algorithm,
         eps=eps,
         bounds=bounds,
+        estimate=estimate,
+        l_estimate=l_estimate,
         tail_size=tail_size,
         return_stats=return_stats,
     )
@@ -129,6 +141,8 @@ function zeta(G::RealSchottkyGroup, coeffs, u;
               algorithm=:bogatyrev,
               eps=1e-6,
               bounds=nothing,
+              estimate=:k3,
+              l_estimate=:derivative,
               tail_size=default_tail_size,
               return_stats=false)
 
@@ -146,6 +160,8 @@ function zeta(G::RealSchottkyGroup, coeffs, u;
             algorithm=algorithm,
             eps=eps,
             bounds=bounds,
+            estimate=estimate,
+            l_estimate=l_estimate,
             tail_size=tail_size,
             return_stats=return_stats
         )
@@ -166,6 +182,8 @@ function exp_int_eta(G::RealSchottkyGroup, u, z, w;
                      algorithm=:bogatyrev,
                      eps=1e-6,
                      bounds=nothing,
+                     estimate=:k3,
+                     l_estimate=:derivative,
                      tail_size=default_tail_size,
                      return_stats=false)
 
@@ -185,6 +203,8 @@ function exp_int_eta(G::RealSchottkyGroup, u, z, w;
         algorithm=algorithm,
         eps=eps,
         bounds=bounds,
+        estimate=estimate,
+        l_estimate=l_estimate,
         tail_size=tail_size,
         return_stats=return_stats
     )
@@ -204,6 +224,8 @@ function exp_int_zeta_j(G::RealSchottkyGroup, j::Integer, u;
                         algorithm=:bogatyrev,
                         eps=1e-6,
                         bounds=nothing,
+                        estimate=:k3,
+                        l_estimate=:derivative,
                         tail_size=default_tail_size,
                         return_stats=false)
 
@@ -226,6 +248,8 @@ function exp_int_zeta_j(G::RealSchottkyGroup, j::Integer, u;
         algorithm=algorithm,
         eps=eps,
         bounds=bounds,
+        estimate=estimate,
+        l_estimate=l_estimate,
         tail_size=tail_size,
         return_stats=return_stats
     )
@@ -238,9 +262,31 @@ end
 
 Naive branch logarithm of `exp ∫_∞^u ζ_j`.
 """
-function int_zeta_j(G::RealSchottkyGroup, j::Integer, u; max_depth, algorithm=:bogatyrev, eps=1e-6, bounds=nothing, tail_size=default_tail_size, return_stats=false)
+function int_zeta_j(G::RealSchottkyGroup, j::Integer, u; 
+                    max_depth, 
+                    algorithm=:bogatyrev, 
+                    eps=1e-6, 
+                    bounds=nothing, 
+                    estimate=:k3,
+                    l_estimate=:derivative, 
+                    tail_size=default_tail_size, 
+                    return_stats=false)
+
     uvec = as_complex_vector(u)
-    vals = exp_int_zeta_j(G, j, uvec; max_depth=max_depth, algorithm=algorithm, eps=eps, bounds=bounds, tail_size=tail_size, return_stats=return_stats)
+    vals = exp_int_zeta_j(
+        G, 
+        j, 
+        uvec; 
+        max_depth=max_depth, 
+        algorithm=algorithm, 
+        eps=eps, 
+        bounds=bounds, 
+        estimate=estimate,
+        l_estimate=l_estimate, 
+        tail_size=tail_size, 
+        return_stats=return_stats
+    )
+
     result = log.(vals)
     return maybe_scalar(result, u)
 end
@@ -250,14 +296,24 @@ end
 
 Naive branch integral `∫_∞^u sum_j coeffs[j] ζ_j`.
 """
-function int_zeta(G::RealSchottkyGroup, coeffs, u; max_depth, algorithm=:bogatyrev, eps=1e-6, bounds=nothing, tail_size=default_tail_size, return_stats=false)
+function int_zeta(G::RealSchottkyGroup, coeffs, u; 
+                  max_depth, 
+                  algorithm=:bogatyrev, 
+                  eps=1e-6, 
+                  bounds=nothing, 
+                  estimate=:k3,
+                  l_estimate=:derivative, 
+                  tail_size=default_tail_size, 
+                  return_stats=false)
+
     length(coeffs) == G.g || throw(ArgumentError("coeffs must have length g"))
 
     uvec = as_complex_vector(u)
     result = zeros(ComplexF64, length(uvec))
 
     for j in 1:G.g
-        vals = exp_int_zeta_j(G, j, uvec; max_depth=max_depth, algorithm=algorithm, eps=eps, bounds=bounds, tail_size=tail_size, return_stats=return_stats)
+        vals = exp_int_zeta_j(G, j, uvec; max_depth=max_depth, algorithm=algorithm, eps=eps, bounds=bounds, estimate=estimate,
+        l_estimate=l_estimate, tail_size=tail_size, return_stats=return_stats)
         result .+= ComplexF64(coeffs[j]) .* log.(vals)
     end
 
@@ -282,6 +338,8 @@ function exp_period(G::RealSchottkyGroup, l::Integer, j::Integer;
                     algorithm=:bogatyrev,
                     eps=1e-6,
                     bounds=nothing,
+                    estimate=:k3,
+                    l_estimate=:derivative,
                     tail_size=default_tail_size,
                     return_stats=false)
 
@@ -309,6 +367,8 @@ function exp_period(G::RealSchottkyGroup, l::Integer, j::Integer;
         algorithm=algorithm,
         eps=eps,
         bounds=bounds,
+        estimate=estimate,
+        l_estimate=l_estimate,
         tail_size=tail_size,
         return_stats=return_stats
     )
@@ -326,6 +386,8 @@ function period_matrix(G::RealSchottkyGroup;
                        algorithm=:bogatyrev,
                        eps=1e-6,
                        bounds=nothing,
+                       estimate=:k3,
+                       l_estimate=:derivative,
                        tail_size=default_tail_size,
                        return_stats=false)
 
@@ -340,6 +402,8 @@ function period_matrix(G::RealSchottkyGroup;
             algorithm=algorithm,
             eps=eps,
             bounds=bounds,
+            estimate=estimate,
+            l_estimate=l_estimate,
             tail_size=tail_size,
             return_stats=return_stats
         ))
